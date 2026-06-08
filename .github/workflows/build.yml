@@ -10,14 +10,14 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Set up JDK 11
+    - name: Set up JDK 17
       uses: actions/setup-java@v3
       with:
-        java-version: '11'
+        java-version: '17'
         distribution: 'temurin'
     
     - name: Create Gradle wrapper
-      run: gradle wrapper --gradle-version 7.6.2
+      run: gradle wrapper --gradle-version 7.5.1
     
     - name: Make gradlew executable
       run: chmod +x ./gradlew
