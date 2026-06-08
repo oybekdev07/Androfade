@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build:
@@ -15,6 +15,9 @@ jobs:
       with:
         java-version: '11'
         distribution: 'temurin'
+    
+    - name: Create Gradle wrapper
+      run: gradle wrapper --gradle-version 7.6.2
     
     - name: Make gradlew executable
       run: chmod +x ./gradlew
