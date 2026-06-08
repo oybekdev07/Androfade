@@ -16,13 +16,14 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
     
-    - name: Build with Gradle
-      run: |
-        if [ ! -f "./gradlew" ]; then
-          gradle wrapper --gradle-version 7.4.2
-        fi
-        chmod +x ./gradlew
-        ./gradlew assembleDebug
+    - name: Create Gradle Wrapper
+      run: gradle wrapper --gradle-version 7.5
+    
+    - name: Make gradlew executable
+      run: chmod +x ./gradlew
+    
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
